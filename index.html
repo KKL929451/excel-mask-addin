@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <meta http-equiv="X-UA-Compatible" content="IE=Edge" />
+  <title>Excel Readable Masking</title>
+  <link rel="stylesheet" href="styles.css" />
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script defer src="codec.js?v=2"></script>
+  <script defer src="app.js?v=2"></script>
+</head>
+<body>
+  <main>
+    <div class="eyebrow">EXCEL TASK PANE ADD-IN</div>
+    <h1>Readable Data Mask <small>v2</small></h1>
+    <p class="intro">Reversible character shifting for your <strong>Main</strong> sheet.</p>
+    <div class="facts">
+      <div><span>MONITORING</span><strong id="monitoring">Connecting…</strong></div>
+      <div><span>WORKBOOK STATUS</span><strong id="workbook-status">—</strong></div>
+      <div><span>PASSWORD CELL</span><strong>S1</strong></div>
+      <div><span>STATUS CELL</span><strong>T1</strong></div>
+    </div>
+    <p class="help">Enter the password in <strong>S1</strong> to show the original text. Clear S1 or type an incorrect value to mask it. Changes are detected <strong>only while this pane is open</strong>.</p>
+    <button id="apply" class="primary">Apply value in S1</button>
+    <button id="lock">Mask now &amp; clear S1</button>
+    <button id="refresh" class="outline">Refresh status</button>
+    <div role="status" aria-live="polite" id="status" data-kind="info">Connecting to Excel…</div>
+    <div class="small">Affects B–G and J–O, rows 2 to last used row. English letters and digits can swap with one another; Chinese, Japanese and Korean remain in their own character groups. This is <strong>masking, not security</strong>. Cloud AutoSave and version history can store unmasked data.</div>
+  </main>
+</body>
+</html>
