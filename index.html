@@ -7,13 +7,13 @@
   <title>Excel Readable Masking</title>
   <link rel="stylesheet" href="styles.css" />
   <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
-  <script defer src="codec.js?v=2"></script>
-  <script defer src="app.js?v=2"></script>
+  <script defer src="codec.js?v=3"></script>
+  <script defer src="app.js?v=3"></script>
 </head>
 <body>
   <main>
     <div class="eyebrow">EXCEL TASK PANE ADD-IN</div>
-    <h1>Readable Data Mask <small>v2</small></h1>
+    <h1>Readable Data Mask <small>v3</small></h1>
     <p class="intro">Reversible character shifting for your <strong>Main</strong> sheet.</p>
     <div class="facts">
       <div><span>MONITORING</span><strong id="monitoring">Connecting…</strong></div>
@@ -26,7 +26,7 @@
     <button id="lock">Mask now &amp; clear S1</button>
     <button id="refresh" class="outline">Refresh status</button>
     <div role="status" aria-live="polite" id="status" data-kind="info">Connecting to Excel…</div>
-    <div class="small">Affects B–G and J–O, rows 2 to last used row. English letters and digits can swap with one another; Chinese, Japanese and Korean remain in their own character groups. This is <strong>masking, not security</strong>. Cloud AutoSave and version history can store unmasked data.</div>
+    <div class="small">Affects B–G and J–O, rows 2 to last used row. English letters and digits can swap with one another; Chinese, Japanese and Korean remain in their own character groups. Existing formula cells are skipped (their results may remain visible). Masked output never contains raw =, +, or - characters. This is <strong>masking, not security</strong>. Cloud AutoSave and version history can store unmasked data.</div>
   </main>
 </body>
 </html>

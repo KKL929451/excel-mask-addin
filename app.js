@@ -1,4 +1,4 @@
-/* Office.js browser add-in V2. Runs only while this task pane is open. */
+/* Office.js browser add-in V3. Formula cells are never changed. */
 (() => {
   "use strict";
 
@@ -116,6 +116,7 @@
       // Prevalidate *every* output before writing anything.
       const jobs = [];
       let countChanged = 0;
+      let countSkippedFormulas = 0;
       for (const req of requests) {
         const values = [];
         const textFormats = [];
@@ -128,7 +129,12 @@
             const formula = req.range.formulas[r][c];
             const label = `${String.fromCharCode(65 + req.startCol + c)}${req.row + r}`;
             if (typeof formula === "string" && formula.startsWith("=")) {
-              throw new Error(`Formula found at ${label}. This masking add-in cannot transform formulas.`);
+              // Formula is intentionally left in place, including its result.
+              // The null values below leave this cell and its formatting unchanged.
+              valueRow.push(null);
+              formatsRow.push(null);
+              countSkippedFormulas++;
+              continue;
             }
             if (original === "" || original === null || original === undefined) {
               valueRow.push(null);  // null preserves the original blank cell
@@ -140,9 +146,11 @@
               wantLocked ? 1 : -1
             );
             if (transformed.length > 32767) throw new Error(`Cell ${label} exceeds Excel's text limit.`);
-            // Excel Range.values can interpret these leading characters as a formula.
+            // V3 masked output never starts with =, + or -. When
+            // decrypting actual plaintext that starts with those signs,
+            // Excel Range.values would interpret it as a formula, so stop.
             if (/^[=+\-]/.test(transformed)) {
-              throw new Error(`Cell ${label} would start with =, + or -. To avoid formula interpretation, this version stops without modifying anything.`);
+              throw new Error(`Cell ${label} would start with a formula character when displayed. Restore this text safely in desktop Excel or as a text-formatted value.`);
             }
             valueRow.push(transformed);
             formatsRow.push("@");
@@ -164,12 +172,21 @@
       stateCell.values = [[wantLocked ? "LOCKED" : "UNLOCKED"]];
       if (wantLocked) pwd.clear(Excel.ClearApplyTo.contents);
       await context.sync();
-      return { count: countChanged, state: wantLocked ? "LOCKED" : "UNLOCKED", unchanged: false };
+      return {
+        count: countChanged,
+        skipped: countSkippedFormulas,
+        state: wantLocked ? "LOCKED" : "UNLOCKED",
+        unchanged: false
+      };
     });
     $("workbook-status").textContent = outcome.state;
     display(outcome.unchanged
       ? `Already ${outcome.state.toLowerCase()}; no shifting performed.`
-      : `${outcome.state}: processed ${outcome.count} nonblank cells.`, "ok");
+      : `${outcome.state}: processed ${outcome.count} cells. ` +
+        (outcome.skipped
+          ? `Skipped ${outcome.skipped} formula cell(s). Their calculated values are NOT masked.`
+          : `No formula cells skipped.`),
+      outcome.skipped ? "info" : "ok");
   }
 
   function onWorksheetChanged(event) {
