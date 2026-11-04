@@ -1,4 +1,6 @@
-/* Office.js browser add-in V3. Formula cells are never changed. */
+/* Office.js task pane UI, compact layout for the existing V3 codec.
+ * The masking algorithm is unchanged. Formula cells are left untouched.
+ */
 (() => {
   "use strict";
 
@@ -6,32 +8,53 @@
     sheet: "Main",
     passwordCell: "S1",
     statusCell: "T1",
-    password: "D", // IMPORTANT: visible in source. Visual masking only, not security.
-    blocks: [{ address: "B2:G1048576", colIndex: 1 },
-             { address: "J2:O1048576", colIndex: 9 }],
+    password: "D", // Visual masking only; this is visible in source code.
+    blocks: [
+      { address: "B2:G1048576", colIndex: 1 },
+      { address: "J2:O1048576", colIndex: 9 }
+    ],
     chunkRows: 150,
     maxRowsPerBlock: 30000
   };
 
-  const $ = (id) => document.getElementById(id);
+  const $ = id => document.getElementById(id);
   let operationQueue = Promise.resolve();
 
-  function display(message, kind = "info") {
-    const box = $("status");
-    box.textContent = message;
-    box.dataset.kind = kind;
+  function setWorkbookStatus(raw) {
+    const state = (raw || "NOT INITIALIZED").toUpperCase();
+    $("workbook-status").textContent = state;
+    $("workbook-status").dataset.state = state;
+  }
+
+  function clearError() {
+    $("status").hidden = true;
+    $("status").textContent = "";
+  }
+
+  function showError(message) {
+    $("status").textContent = message;
+    $("status").hidden = false;
   }
 
   function queueOperation(fn) {
-    operationQueue = operationQueue.catch(() => {}).then(fn);
-    return operationQueue.catch((e) => {
-      console.error(e);
-      display(`Error: ${e && e.message ? e.message : e}`, "error");
+    operationQueue = operationQueue.catch(() => {}).then(async () => {
+      clearError();
+      $("apply").disabled = true;
+      $("lock").disabled = true;
+      try {
+        return await fn();
+      } finally {
+        $("apply").disabled = false;
+        $("lock").disabled = false;
+      }
+    });
+    return operationQueue.catch(err => {
+      console.error(err);
+      showError(err && err.message ? err.message : String(err));
     });
   }
 
   function changedPasswordCell(address) {
-    // Event address can contain worksheet names, $ signs and (for paste) a range.
     const local = address.split("!").pop().replace(/\$/g, "").toUpperCase();
     const parts = local.split(":");
     function coords(cell) {
@@ -48,27 +71,20 @@
       Math.max(a.col, b.col) >= 19);
   }
 
-  async function readState() {
-    return Excel.run(async (context) => {
-      const sheet = context.workbook.worksheets.getItem(CFG.sheet);
-      const pwd = sheet.getRange(CFG.passwordCell);
-      const state = sheet.getRange(CFG.statusCell);
-      pwd.load("values");
-      state.load("values");
+  async function refreshState() {
+    await Excel.run(async context => {
+      const stateCell = context.workbook.worksheets.getItem(CFG.sheet)
+        .getRange(CFG.statusCell);
+      stateCell.load("values");
       await context.sync();
-      return { password: String(pwd.values[0][0] ?? ""), status: String(state.values[0][0] ?? "") };
+      setWorkbookStatus(String(stateCell.values[0][0] ?? ""));
     });
   }
 
-  async function refreshState() {
-    const state = await readState();
-    $("workbook-status").textContent = state.status || "NOT INITIALIZED";
-    display(`Workbook state: ${state.status || "not initialized"}. S1 is ${state.password ? "filled" : "empty"}.`, "info");
-  }
-
-  async function applyPassword(forceLock = false) {
-    display("Reading workbook and preparing changes…", "info");
-    const outcome = await Excel.run(async (context) => {
+  // Explicit decrypt requires the right password; Encrypt always masks and clears S1.
+  // Automatic S1 edits retain the original V3 toggle behavior.
+  async function applyPassword(forceLock = false, requireCorrectPassword = false) {
+    const outcome = await Excel.run(async context => {
       const sheet = context.workbook.worksheets.getItem(CFG.sheet);
       const pwd = sheet.getRange(CFG.passwordCell);
       const stateCell = sheet.getRange(CFG.statusCell);
@@ -79,44 +95,48 @@
       const state = String(stateCell.values[0][0] ?? "");
       const supplied = String(pwd.values[0][0] ?? "");
       if (state !== "LOCKED" && state !== "UNLOCKED") {
-        throw new Error("T1 must be LOCKED or UNLOCKED. On a fresh, readable test workbook, initialize it with the desktop VBA SetupProtection macro first.");
+        throw new Error("The workbook is not initialized: T1 must be LOCKED or UNLOCKED.");
+      }
+      if (requireCorrectPassword && supplied !== CFG.password) {
+        throw new Error("Enter the correct password in S1 before decrypting.");
       }
       const wantLocked = forceLock || supplied !== CFG.password;
       if ((wantLocked && state === "LOCKED") || (!wantLocked && state === "UNLOCKED")) {
         if (forceLock) pwd.clear(Excel.ClearApplyTo.contents);
         await context.sync();
-        return { count: 0, state, unchanged: true };
+        return { state, unchanged: true };
       }
 
-      // Find last used row across the two selected blocks (ignores formatting).
-      const used = CFG.blocks.map(b => sheet.getRange(b.address).getUsedRangeOrNullObject(true));
+      // Find last used rows, ignoring formatting.
+      const used = CFG.blocks.map(b =>
+        sheet.getRange(b.address).getUsedRangeOrNullObject(true));
       await context.sync();
-      for (let i = 0; i < used.length; i++) {
-        if (!used[i].isNullObject) used[i].load("rowIndex,rowCount");
+      for (const range of used) {
+        if (!range.isNullObject) range.load("rowIndex,rowCount");
       }
       await context.sync();
-      // Keep bounds in matching order (including empty blocks).
-      const lastRows = used.map(x => x.isNullObject ? 1 : x.rowIndex + x.rowCount);
+      const lastRows = used.map(x =>
+        x.isNullObject ? 1 : x.rowIndex + x.rowCount);
+
       const requests = [];
       for (let i = 0; i < CFG.blocks.length; i++) {
         const last = lastRows[i];
         if (last < 2) continue;
         if (last > CFG.maxRowsPerBlock) {
-          throw new Error(`Block ${CFG.blocks[i].address} has data down to row ${last}; adjust maxRowsPerBlock in app.js or reduce the data range.`);
+          throw new Error(`Data extends to row ${last}, beyond the configured limit.`);
         }
         for (let row = 2; row <= last; row += CFG.chunkRows) {
           const count = Math.min(CFG.chunkRows, last - row + 1);
-          const range = sheet.getRangeByIndexes(row - 1, CFG.blocks[i].colIndex, count, 6);
+          const range = sheet.getRangeByIndexes(
+            row - 1, CFG.blocks[i].colIndex, count, 6);
           range.load("values,formulas");
-          requests.push({ range, row, startCol: CFG.blocks[i].colIndex, count });
+          requests.push({range, row, startCol: CFG.blocks[i].colIndex, count});
         }
       }
       await context.sync();
 
-      // Prevalidate *every* output before writing anything.
+      // Prepare all changes before writing. Null preserves formula/blank cells.
       const jobs = [];
-      let countChanged = 0;
-      let countSkippedFormulas = 0;
       for (const req of requests) {
         const values = [];
         const textFormats = [];
@@ -129,15 +149,12 @@
             const formula = req.range.formulas[r][c];
             const label = `${String.fromCharCode(65 + req.startCol + c)}${req.row + r}`;
             if (typeof formula === "string" && formula.startsWith("=")) {
-              // Formula is intentionally left in place, including its result.
-              // The null values below leave this cell and its formatting unchanged.
               valueRow.push(null);
               formatsRow.push(null);
-              countSkippedFormulas++;
               continue;
             }
             if (original === "" || original === null || original === undefined) {
-              valueRow.push(null);  // null preserves the original blank cell
+              valueRow.push(null);
               formatsRow.push(null);
               continue;
             }
@@ -145,26 +162,24 @@
               String(original), req.row + r, req.startCol + c + 1,
               wantLocked ? 1 : -1
             );
-            if (transformed.length > 32767) throw new Error(`Cell ${label} exceeds Excel's text limit.`);
-            // V3 masked output never starts with =, + or -. When
-            // decrypting actual plaintext that starts with those signs,
-            // Excel Range.values would interpret it as a formula, so stop.
+            if (transformed.length > 32767) {
+              throw new Error(`Cell ${label} exceeds Excel's character limit.`);
+            }
+            // Keep the original V3 safeguard against formula interpretation.
             if (/^[=+\-]/.test(transformed)) {
-              throw new Error(`Cell ${label} would start with a formula character when displayed. Restore this text safely in desktop Excel or as a text-formatted value.`);
+              throw new Error(`Cell ${label} would be interpreted as a formula. Restore it with desktop Excel.`);
             }
             valueRow.push(transformed);
             formatsRow.push("@");
-            countChanged++;
             changedHere = true;
           }
           values.push(valueRow);
           textFormats.push(formatsRow);
         }
-        if (changedHere) jobs.push({ range: req.range, values, textFormats });
+        if (changedHere) jobs.push({range: req.range, values, textFormats});
       }
 
-      // Commit the prepared modifications, preserving blanks and styling.
-      // Network interruption could still result in partial writes: use a backup.
+      // As with V3, interruptions during writes can cause partial updates.
       for (const job of jobs) {
         job.range.numberFormat = job.textFormats;
         job.range.values = job.values;
@@ -172,56 +187,44 @@
       stateCell.values = [[wantLocked ? "LOCKED" : "UNLOCKED"]];
       if (wantLocked) pwd.clear(Excel.ClearApplyTo.contents);
       await context.sync();
-      return {
-        count: countChanged,
-        skipped: countSkippedFormulas,
-        state: wantLocked ? "LOCKED" : "UNLOCKED",
-        unchanged: false
-      };
+      return { state: wantLocked ? "LOCKED" : "UNLOCKED", unchanged: false };
     });
-    $("workbook-status").textContent = outcome.state;
-    display(outcome.unchanged
-      ? `Already ${outcome.state.toLowerCase()}; no shifting performed.`
-      : `${outcome.state}: processed ${outcome.count} cells. ` +
-        (outcome.skipped
-          ? `Skipped ${outcome.skipped} formula cell(s). Their calculated values are NOT masked.`
-          : `No formula cells skipped.`),
-      outcome.skipped ? "info" : "ok");
+    setWorkbookStatus(outcome.state);
   }
 
   function onWorksheetChanged(event) {
     if (!changedPasswordCell(event.address)) return;
-    // Ignore changes made by another coauthor in this client. Simultaneous edits
-    // remain inherently unsafe and should be avoided during masking.
     if (event.source === Excel.EventSource.remote) return;
     queueOperation(() => applyPassword());
   }
 
   async function begin() {
     if (!Office.context.requirements.isSetSupported("ExcelApi", "1.7")) {
-      display("This version of Excel does not support the worksheet change event.", "error");
-      return;
+      setWorkbookStatus("UNAVAILABLE");
+      throw new Error("This Excel version cannot monitor worksheet changes.");
     }
-    await Excel.run(async (context) => {
+    await Excel.run(async context => {
       const sheet = context.workbook.worksheets.getItem(CFG.sheet);
       sheet.onChanged.add(onWorksheetChanged);
       await context.sync();
     });
-    $("monitoring").textContent = "Active — keep pane open";
     await refreshState();
   }
 
-  $("apply").addEventListener("click", () => queueOperation(() => applyPassword()));
-  $("lock").addEventListener("click", () => queueOperation(() => applyPassword(true)));
-  $("refresh").addEventListener("click", () => queueOperation(refreshState));
+  $("apply").addEventListener("click", () =>
+    queueOperation(() => applyPassword(false, true)));
+  $("lock").addEventListener("click", () =>
+    queueOperation(() => applyPassword(true)));
 
   if (typeof Office === "undefined") {
-    display("Open this page through Excel > My Add-ins. It cannot access a workbook in a normal browser tab.", "error");
+    setWorkbookStatus("UNAVAILABLE");
+    showError("Open this add-in from Excel.");
     return;
   }
   Office.onReady(info => {
     if (info.host !== Office.HostType.Excel) {
-      display("This add-in must be opened inside Excel.", "error");
+      setWorkbookStatus("UNAVAILABLE");
+      showError("Open this add-in from Excel.");
       return;
     }
     queueOperation(begin);
