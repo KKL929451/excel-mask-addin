@@ -98,7 +98,7 @@
         throw new Error("The workbook is not initialized: T1 must be LOCKED or UNLOCKED.");
       }
       if (requireCorrectPassword && supplied !== CFG.password) {
-        throw new Error("Enter the correct password in S1 before decrypting.");
+        throw new Error("Enter the correct password before decrypting.");
       }
       const wantLocked = forceLock || supplied !== CFG.password;
       if ((wantLocked && state === "LOCKED") || (!wantLocked && state === "UNLOCKED")) {
